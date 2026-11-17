@@ -26,6 +26,7 @@ import android.util.Log;
 
 import java.io.BufferedInputStream;
 import java.io.DataInputStream;
+import java.io.EOFException;
 import java.io.IOException;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
@@ -117,6 +118,7 @@ public class ReceiverActivity extends Activity implements SurfaceHolder.Callback
         try {
             serverSocket = new ServerSocket(Proto.PORT);
         } catch (Exception e) {
+            CrashLog.record(this, "Receiver video listener failed to start", e);
             setStatus("Could not listen on port " + Proto.PORT + ": " + e.getMessage());
             return;
         }
@@ -138,7 +140,9 @@ public class ReceiverActivity extends Activity implements SurfaceHolder.Callback
             try {
                 streamSession(s);
             } catch (Exception e) {
-                // Sender disconnected or sent garbage; go back to waiting.
+                if (!(e instanceof EOFException)) {
+                    CrashLog.record(this, "Video stream ended with an error", e);
+                }
             } finally {
                 try { s.close(); } catch (Exception ignored) {}
                 currentSocket = null;
@@ -222,7 +226,10 @@ public class ReceiverActivity extends Activity implements SurfaceHolder.Callback
                 try {
                     streamAudio(s);
                 } catch (Exception e) {
-                    if (alive) Log.w(TAG, "Audio stream ended", e);
+                    if (alive && !(e instanceof EOFException)) {
+                        Log.w(TAG, "Audio stream ended", e);
+                        CrashLog.record(this, "Audio stream ended with an error", e);
+                    }
                 } finally {
                     try { s.close(); } catch (Exception ignored) {}
                     currentAudioSocket = null;
@@ -231,6 +238,7 @@ public class ReceiverActivity extends Activity implements SurfaceHolder.Callback
         } catch (Exception e) {
             if (alive) {
                 Log.e(TAG, "Could not listen for audio on port " + Proto.AUDIO_PORT, e);
+                CrashLog.record(this, "Receiver audio listener failed", e);
             }
         }
     }

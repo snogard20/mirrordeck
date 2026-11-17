@@ -108,6 +108,7 @@ public class ScreenCastService extends Service {
                 }
             }, null);
         } catch (Exception e) {
+            CrashLog.record(this, "Screen capture failed to initialize", e);
             liveStatus = "Screen capture failed to initialize: " + e.getMessage();
             stopSelf();
             return START_NOT_STICKY;
@@ -213,6 +214,7 @@ public class ScreenCastService extends Service {
             }
         } catch (Exception e) {
             Log.e(TAG, "Session failed", e);
+            CrashLog.record(this, "Casting session failed", e);
             if (!stopRequested) {
                 liveStatus = "Casting stopped: " + e.getMessage();
             }
@@ -276,6 +278,7 @@ public class ScreenCastService extends Service {
             return null;
         } catch (Exception e) {
             closeAudioCapture();
+            CrashLog.record(this, "Playback audio capture unavailable", e);
             String message = e.getMessage();
             return message == null || message.isEmpty()
                     ? "audio capture is unavailable" : message;
@@ -296,6 +299,7 @@ public class ScreenCastService extends Service {
         } catch (Exception e) {
             if (!stopRequested) {
                 Log.w(TAG, "Audio stream stopped", e);
+                CrashLog.record(this, "Playback audio stream stopped", e);
                 liveStatus = "Casting to " + host + " (audio stopped: " + e.getMessage() + ")";
             }
         }

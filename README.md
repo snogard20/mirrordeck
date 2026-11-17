@@ -49,6 +49,11 @@ purely as a fallback — the normal flow never needs it.
   playback audio.
 - The main activity is available to standard Android launchers and Android
   TV/Leanback launchers, with a TV banner for launcher dashboards.
+- Uncaught crashes and selected casting/receiver errors are saved in a
+  private, size-limited diagnostic log. From the home screen, choose
+  **Save diagnostic log** to export it using Android's file picker. Nothing
+  is uploaded automatically; the log includes app/device versions and error
+  details, but not captured screen or audio content.
 - Wire protocol (`Proto.java`): a small header (magic `CDK1`, dimensions,
   SPS/PPS) followed by length-prefixed access units; audio uses a separate
   `MDA1` stream on TCP port 47477.
@@ -77,7 +82,7 @@ build-tools 34.0.0):
 
 ```sh
 export ANDROID_HOME=/path/to/android-sdk   # default: ~/android-sdk
-./build.sh                                  # writes MirrorDeck-v1.3.1.apk
+./build.sh                                  # writes MirrorDeck-v1.4.apk
 ```
 
 `build.sh` runs aapt2 → javac → dex → zipalign → apksigner and generates
@@ -89,5 +94,5 @@ this code's anonymous NSD listener classes; any newer standalone R8
 
 ## Status
 
-Working prototype (v1.3.1). Known limits: audio capture depends on Android 10+
+Working prototype (v1.4). Known limits: audio capture depends on Android 10+
 and the source app's playback-capture policy; 1-to-1, same Wi-Fi network.
