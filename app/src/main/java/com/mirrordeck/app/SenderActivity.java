@@ -1,6 +1,7 @@
 package com.mirrordeck.app;
 
 import android.app.Activity;
+import android.Manifest;
 import android.content.Context;
 import android.content.Intent;
 import android.media.projection.MediaProjectionManager;
@@ -52,6 +53,7 @@ import java.util.concurrent.TimeUnit;
  */
 public class SenderActivity extends Activity {
     private static final int REQ_PROJECTION = 1001;
+    private static final int REQ_AUDIO_PERMISSION = 1002;
 
     private static final class Entry {
         String name;
@@ -92,7 +94,9 @@ public class SenderActivity extends Activity {
         root.addView(Ui.title(this, "Share my screen"));
         root.addView(Ui.body(this,
                 "Devices on your Wi-Fi appear below by themselves. " +
-                "Tap one and casting starts — nothing to type, no settings."));
+                "Tap one and casting starts — nothing to type, no settings. " +
+                "Android may ask for microphone permission to capture supported " +
+                "app audio; MirrorDeck does not stream microphone audio."));
 
         searchStatus = Ui.status(this, "Looking for devices on your Wi-Fi…");
         root.addView(searchStatus);
@@ -107,7 +111,7 @@ public class SenderActivity extends Activity {
             Entry e = entries.get(position);
             pendingHost = e.host;
             pendingPort = e.port;
-            askProjection();
+            requestCapture();
         });
         root.addView(list);
 
@@ -142,7 +146,7 @@ public class SenderActivity extends Activity {
             }
             pendingHost = ip;
             pendingPort = Proto.PORT;
-            askProjection();
+            requestCapture();
         });
         manualBox.addView(manualStart);
         TextView manualLink = Ui.body(this, "Can't see your device? Enter its address manually");
@@ -204,6 +208,24 @@ public class SenderActivity extends Activity {
     }
 
     // ---------- casting ----------
+
+    private void requestCapture() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
+                && checkSelfPermission(Manifest.permission.RECORD_AUDIO)
+                != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO},
+                    REQ_AUDIO_PERMISSION);
+            return;
+        }
+        askProjection();
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions,
+                                           int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == REQ_AUDIO_PERMISSION) askProjection();
+    }
 
     private void askProjection() {
         // No other permission dialogs here: an extra dialog racing Android's

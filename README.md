@@ -41,11 +41,20 @@ purely as a fallback — the normal flow never needs it.
 - Sender: Android **MediaProjection** → VirtualDisplay → hardware
   **H.264** encoder (long edge capped at 1280 px, 4 Mbps, 30 fps)
   → TCP socket.
-- Receiver: H.264 decoder rendering full-screen.
+- Sender: Android 10+ **AudioPlaybackCapture** streams supported app
+  playback as 48 kHz stereo PCM over a separate TCP socket. Android's
+  microphone permission is required for playback capture; MirrorDeck does
+  not stream microphone audio.
+- Receiver: H.264 decoder rendering full-screen and an `AudioTrack` for
+  playback audio.
 - Wire protocol (`Proto.java`): a small header (magic `CDK1`, dimensions,
-  SPS/PPS) followed by length-prefixed access units.
-- Video only for now — no audio yet. One sender to one receiver,
-  same network only. Everything stays on your LAN; nothing leaves it.
+  SPS/PPS) followed by length-prefixed access units; audio uses a separate
+  `MDA1` stream on TCP port 47477.
+- Audio capture requires Android 10+ on the sending device. Android and
+  individual apps can restrict playback capture, so some content may be
+  silent. Video continues if audio capture or the receiver's audio listener
+  is unavailable. One sender to one receiver, same network only. Everything
+  stays on your LAN; nothing leaves it.
 
 ## Layout
 
@@ -66,7 +75,7 @@ build-tools 34.0.0):
 
 ```sh
 export ANDROID_HOME=/path/to/android-sdk   # default: ~/android-sdk
-./build.sh                                  # writes MirrorDeck-v1.2.apk
+./build.sh                                  # writes MirrorDeck-v1.3.apk
 ```
 
 `build.sh` runs aapt2 → javac → dex → zipalign → apksigner and generates
@@ -78,5 +87,5 @@ this code's anonymous NSD listener classes; any newer standalone R8
 
 ## Status
 
-Working prototype (v1.2). Known limits: video only, 1-to-1, same
-Wi-Fi network.
+Working prototype (v1.3). Known limits: audio capture depends on Android 10+
+and the source app's playback-capture policy; 1-to-1, same Wi-Fi network.

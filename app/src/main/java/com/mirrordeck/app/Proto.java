@@ -5,7 +5,7 @@ import java.io.DataOutputStream;
 import java.io.IOException;
 
 /**
- * MirrorDeck wire protocol v1 (LAN, TCP, video only).
+ * MirrorDeck wire protocol v1 (LAN, TCP).
  *
  * Header, sent once by the sender right after connecting:
  *   4 bytes  magic "CDK1"
@@ -23,6 +23,10 @@ import java.io.IOException;
  */
 public final class Proto {
     public static final int PORT = 47475;
+    public static final int AUDIO_PORT = 47477;
+    public static final int AUDIO_SAMPLE_RATE = 48000;
+    public static final int AUDIO_CHANNELS = 2;
+    public static final int MAX_AUDIO_PACKET_BYTES = 16 * 1024;
     public static final String SERVICE_TYPE = "_mirrordeck._tcp.";
     public static final String SERVICE_NAME = "MirrorDeck";
 
@@ -33,6 +37,7 @@ public final class Proto {
     public static final String DISCOVER_QUERY = "MDCK_DISCOVER_V1";
     public static final String DISCOVER_REPLY_PREFIX = "MDCK_HERE_V1|";
     public static final byte[] MAGIC = {'C', 'D', 'K', '1'};
+    public static final byte[] AUDIO_MAGIC = {'M', 'D', 'A', '1'};
     public static final int FLAG_KEYFRAME = 1;
     public static final int MAX_FRAME_BYTES = 8 * 1024 * 1024;
 
@@ -82,6 +87,36 @@ public final class Proto {
         out.writeInt(length);
         out.writeByte(keyframe ? FLAG_KEYFRAME : 0);
         out.write(data, offset, length);
+        out.flush();
+    }
+
+    public static void writeAudioHeader(DataOutputStream out) throws IOException {
+        out.write(AUDIO_MAGIC);
+        out.writeInt(AUDIO_SAMPLE_RATE);
+        out.writeInt(AUDIO_CHANNELS);
+        out.flush();
+    }
+
+    public static void readAudioHeader(DataInputStream in) throws IOException {
+        byte[] magic = new byte[AUDIO_MAGIC.length];
+        in.readFully(magic);
+        for (int i = 0; i < AUDIO_MAGIC.length; i++) {
+            if (magic[i] != AUDIO_MAGIC[i]) throw new IOException("Bad audio magic");
+        }
+        int sampleRate = in.readInt();
+        int channels = in.readInt();
+        if (sampleRate != AUDIO_SAMPLE_RATE || channels != AUDIO_CHANNELS) {
+            throw new IOException("Unsupported audio format");
+        }
+    }
+
+    public static void writeAudioPacket(DataOutputStream out, byte[] data, int length)
+            throws IOException {
+        if (length <= 0 || length > MAX_AUDIO_PACKET_BYTES) {
+            throw new IOException("Bad audio packet length " + length);
+        }
+        out.writeInt(length);
+        out.write(data, 0, length);
         out.flush();
     }
 }

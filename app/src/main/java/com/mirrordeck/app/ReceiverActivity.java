@@ -2,6 +2,9 @@ package com.mirrordeck.app;
 
 import android.app.Activity;
 import android.content.Context;
+import android.media.AudioAttributes;
+import android.media.AudioFormat;
+import android.media.AudioTrack;
 import android.media.MediaCodec;
 import android.media.MediaFormat;
 import android.net.nsd.NsdManager;
@@ -19,9 +22,11 @@ import android.view.View;
 import android.view.WindowManager;
 import android.widget.FrameLayout;
 import android.widget.TextView;
+import android.util.Log;
 
 import java.io.BufferedInputStream;
 import java.io.DataInputStream;
+import java.io.IOException;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.InetAddress;
@@ -36,13 +41,18 @@ import java.nio.charset.StandardCharsets;
  * SurfaceView. One sender at a time; when it disconnects, it waits again.
  */
 public class ReceiverActivity extends Activity implements SurfaceHolder.Callback {
+    private static final String TAG = "MirrorDeckReceiver";
     private final Handler ui = new Handler(Looper.getMainLooper());
     private TextView status;
     private Surface surface;
     private volatile boolean alive;
     private Thread serverThread;
+    private Thread audioServerThread;
     private ServerSocket serverSocket;
+    private volatile ServerSocket audioServerSocket;
     private Socket currentSocket;
+    private volatile Socket currentAudioSocket;
+    private volatile AudioTrack audioTrack;
     private NsdManager nsdManager;
     private NsdManager.RegistrationListener registrationListener;
     private WifiManager.MulticastLock multicastLock;
@@ -88,6 +98,8 @@ public class ReceiverActivity extends Activity implements SurfaceHolder.Callback
             startUdpResponder();
             serverThread = new Thread(this::serverLoop, "mirrordeck-receiver");
             serverThread.start();
+            audioServerThread = new Thread(this::audioServerLoop, "mirrordeck-audio-receiver");
+            audioServerThread.start();
         }
     }
 
@@ -167,6 +179,7 @@ public class ReceiverActivity extends Activity implements SurfaceHolder.Callback
                     return;
                 }
             }
+
         }, "mirrordeck-decoder-out");
         outputThread.setDaemon(true);
         outputThread.start();
@@ -197,6 +210,78 @@ public class ReceiverActivity extends Activity implements SurfaceHolder.Callback
             try { decoder.stop(); } catch (Exception ignored) {}
             try { decoder.release(); } catch (Exception ignored) {}
             ui.post(() -> status.setVisibility(View.VISIBLE));
+        }
+    }
+
+    private void audioServerLoop() {
+        try {
+            audioServerSocket = new ServerSocket(Proto.AUDIO_PORT);
+            while (alive) {
+                Socket s = audioServerSocket.accept();
+                currentAudioSocket = s;
+                try {
+                    streamAudio(s);
+                } catch (Exception e) {
+                    if (alive) Log.w(TAG, "Audio stream ended", e);
+                } finally {
+                    try { s.close(); } catch (Exception ignored) {}
+                    currentAudioSocket = null;
+                }
+            }
+        } catch (Exception e) {
+            if (alive) {
+                Log.e(TAG, "Could not listen for audio on port " + Proto.AUDIO_PORT, e);
+            }
+        }
+    }
+
+    private void streamAudio(Socket s) throws Exception {
+        DataInputStream in = new DataInputStream(
+                new BufferedInputStream(s.getInputStream(), 16 * 1024));
+        Proto.readAudioHeader(in);
+        int minBuffer = AudioTrack.getMinBufferSize(Proto.AUDIO_SAMPLE_RATE,
+                AudioFormat.CHANNEL_OUT_STEREO, AudioFormat.ENCODING_PCM_16BIT);
+        if (minBuffer <= 0) throw new IllegalStateException("Audio playback format is unsupported");
+        AudioFormat format = new AudioFormat.Builder()
+                .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                .setSampleRate(Proto.AUDIO_SAMPLE_RATE)
+                .setChannelMask(AudioFormat.CHANNEL_OUT_STEREO)
+                .build();
+        AudioTrack track = new AudioTrack.Builder()
+                .setAudioAttributes(new AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_MEDIA)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                        .build())
+                .setAudioFormat(format)
+                .setBufferSizeInBytes(Math.max(minBuffer * 2, 8192))
+                .setTransferMode(AudioTrack.MODE_STREAM)
+                .build();
+        if (track.getState() != AudioTrack.STATE_INITIALIZED) {
+            track.release();
+            throw new IllegalStateException("Audio player did not initialize");
+        }
+        audioTrack = track;
+        track.play();
+        try {
+            while (alive) {
+                int length = in.readInt();
+                if (length <= 0 || length > Proto.MAX_AUDIO_PACKET_BYTES || (length & 1) != 0) {
+                    throw new IllegalStateException("Bad audio packet length " + length);
+                }
+                byte[] packet = new byte[length];
+                in.readFully(packet);
+                int offset = 0;
+                while (offset < length && alive) {
+                    int written = track.write(packet, offset, length - offset,
+                            AudioTrack.WRITE_BLOCKING);
+                    if (written < 0) throw new IOException("Audio playback write failed: " + written);
+                    offset += written;
+                }
+            }
+        } finally {
+            audioTrack = null;
+            try { track.stop(); } catch (Exception ignored) {}
+            track.release();
         }
     }
 
@@ -293,6 +378,9 @@ public class ReceiverActivity extends Activity implements SurfaceHolder.Callback
         try { if (udpSocket != null) udpSocket.close(); } catch (Exception ignored) {}
         try { if (currentSocket != null) currentSocket.close(); } catch (Exception ignored) {}
         try { if (serverSocket != null) serverSocket.close(); } catch (Exception ignored) {}
+        try { if (currentAudioSocket != null) currentAudioSocket.close(); } catch (Exception ignored) {}
+        try { if (audioServerSocket != null) audioServerSocket.close(); } catch (Exception ignored) {}
+        try { if (audioTrack != null) audioTrack.stop(); } catch (Exception ignored) {}
         try {
             if (nsdManager != null && registrationListener != null) {
                 nsdManager.unregisterService(registrationListener);

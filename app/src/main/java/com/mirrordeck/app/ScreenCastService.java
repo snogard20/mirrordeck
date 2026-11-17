@@ -8,6 +8,10 @@ import android.content.Intent;
 import android.content.pm.ServiceInfo;
 import android.hardware.display.DisplayManager;
 import android.hardware.display.VirtualDisplay;
+import android.media.AudioAttributes;
+import android.media.AudioFormat;
+import android.media.AudioPlaybackCaptureConfiguration;
+import android.media.AudioRecord;
 import android.media.MediaCodec;
 import android.media.MediaCodecInfo;
 import android.media.MediaFormat;
@@ -20,6 +24,7 @@ import android.view.Surface;
 
 import java.io.BufferedOutputStream;
 import java.io.DataOutputStream;
+import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.nio.ByteBuffer;
@@ -51,6 +56,9 @@ public class ScreenCastService extends Service {
     private VirtualDisplay virtualDisplay;
     private MediaCodec encoder;
     private Socket socket;
+    private Socket audioSocket;
+    private AudioRecord audioRecord;
+    private Thread audioWorker;
 
     @Override
     public IBinder onBind(Intent intent) {
@@ -144,6 +152,7 @@ public class ScreenCastService extends Service {
             DataOutputStream out = new DataOutputStream(
                     new BufferedOutputStream(socket.getOutputStream(), 64 * 1024));
             liveStatus = "Connected — starting capture…";
+            String audioIssue = startAudioCapture(host);
 
             // 2) Encoder.
             MediaFormat format = MediaFormat.createVideoFormat(
@@ -180,7 +189,9 @@ public class ScreenCastService extends Service {
                     }
                     Proto.writeHeader(out, width, height, toBytes(csd0), toBytes(csd1));
                     headerSent = true;
-                    liveStatus = "Casting to " + host;
+                    liveStatus = audioIssue == null
+                            ? "Casting to " + host + " (audio)"
+                            : "Casting to " + host + " (video only: " + audioIssue + ")";
                     continue;
                 }
                 if (idx < 0) continue;
@@ -196,6 +207,7 @@ public class ScreenCastService extends Service {
                         Proto.writeFrame(out, data, 0, data.length, key);
                     }
                 }
+
                 encoder.releaseOutputBuffer(idx, false);
                 if ((info.flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) break;
             }
@@ -216,6 +228,93 @@ public class ScreenCastService extends Service {
         }
     }
 
+    private String startAudioCapture(String host) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            return "audio capture requires Android 10 or newer";
+        }
+        if (checkSelfPermission(android.Manifest.permission.RECORD_AUDIO)
+                != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            return "microphone permission was not granted";
+        }
+        try {
+            AudioPlaybackCaptureConfiguration config =
+                    new AudioPlaybackCaptureConfiguration.Builder(projection)
+                            .addMatchingUsage(AudioAttributes.USAGE_MEDIA)
+                            .addMatchingUsage(AudioAttributes.USAGE_GAME)
+                            .addMatchingUsage(AudioAttributes.USAGE_UNKNOWN)
+                            .build();
+            AudioFormat format = new AudioFormat.Builder()
+                    .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                    .setSampleRate(Proto.AUDIO_SAMPLE_RATE)
+                    .setChannelMask(AudioFormat.CHANNEL_IN_STEREO)
+                    .build();
+            int minBuffer = AudioRecord.getMinBufferSize(Proto.AUDIO_SAMPLE_RATE,
+                    AudioFormat.CHANNEL_IN_STEREO, AudioFormat.ENCODING_PCM_16BIT);
+            if (minBuffer <= 0) throw new IOException("Audio recording format is unsupported");
+            audioRecord = new AudioRecord.Builder()
+                    .setAudioFormat(format)
+                    .setBufferSizeInBytes(Math.max(minBuffer * 2, 8192))
+                    .setAudioPlaybackCaptureConfig(config)
+                    .build();
+            if (audioRecord.getState() != AudioRecord.STATE_INITIALIZED) {
+                throw new IOException("Audio recorder did not initialize");
+            }
+
+            audioSocket = new Socket();
+            audioSocket.connect(new InetSocketAddress(host, Proto.AUDIO_PORT), 2500);
+            audioSocket.setTcpNoDelay(true);
+            DataOutputStream audioOut = new DataOutputStream(
+                    new BufferedOutputStream(audioSocket.getOutputStream(), 16 * 1024));
+            Proto.writeAudioHeader(audioOut);
+            audioRecord.startRecording();
+            if (audioRecord.getRecordingState() != AudioRecord.RECORDSTATE_RECORDING) {
+                throw new IOException("Audio capture did not start");
+            }
+            audioWorker = new Thread(() -> streamAudio(audioOut, host),
+                    "mirrordeck-audio-sender");
+            audioWorker.start();
+            return null;
+        } catch (Exception e) {
+            closeAudioCapture();
+            String message = e.getMessage();
+            return message == null || message.isEmpty()
+                    ? "audio capture is unavailable" : message;
+        }
+    }
+
+    private void streamAudio(DataOutputStream out, String host) {
+        byte[] buffer = new byte[3840];
+        try {
+            while (!stopRequested) {
+                int count = audioRecord.read(buffer, 0, buffer.length, AudioRecord.READ_BLOCKING);
+                if (count > 0) {
+                    Proto.writeAudioPacket(out, buffer, count);
+                } else if (count < 0) {
+                    throw new IOException("Audio capture read failed: " + count);
+                }
+            }
+        } catch (Exception e) {
+            if (!stopRequested) {
+                Log.w(TAG, "Audio stream stopped", e);
+                liveStatus = "Casting to " + host + " (audio stopped: " + e.getMessage() + ")";
+            }
+        }
+    }
+
+    private void closeAudioCapture() {
+        try { if (audioSocket != null) audioSocket.close(); } catch (Exception ignored) {}
+        audioSocket = null;
+        try {
+            if (audioRecord != null) {
+                if (audioRecord.getRecordingState() == AudioRecord.RECORDSTATE_RECORDING) {
+                    audioRecord.stop();
+                }
+                audioRecord.release();
+            }
+        } catch (Exception ignored) {}
+        audioRecord = null;
+    }
+
     private static byte[] toBytes(ByteBuffer bb) {
         ByteBuffer dup = bb.duplicate();
         byte[] out = new byte[dup.remaining()];
@@ -228,6 +327,7 @@ public class ScreenCastService extends Service {
         virtualDisplay = null;
         try { if (encoder != null) { encoder.stop(); encoder.release(); } } catch (Exception ignored) {}
         encoder = null;
+        closeAudioCapture();
         try { if (projection != null) projection.stop(); } catch (Exception ignored) {}
         projection = null;
         try { if (socket != null) socket.close(); } catch (Exception ignored) {}

@@ -15,7 +15,7 @@ BT="$SDK/build-tools/34.0.0"
 PLAT="$SDK/platforms/android-34/android.jar"
 SRC="app/src/main"
 BUILD="build"
-OUT="${OUT:-$PWD/MirrorDeck-v1.2.apk}"
+OUT="${OUT:-$PWD/MirrorDeck-v1.3.apk}"
 KS="${KEYSTORE:-$PWD/debug.keystore}"
 R8_JAR="${R8_JAR:-$PWD/tools/r8.jar}"
 
@@ -32,7 +32,7 @@ echo "== aapt2 link (base APK + R.java) =="
   --java "$BUILD/gen" \
   "$BUILD/res.zip" \
   --min-sdk-version 24 --target-sdk-version 34 \
-  --version-code 3 --version-name "1.2"
+  --version-code 4 --version-name "1.3"
 
 echo "== javac =="
 # Java 8 target: avoids nest-member attributes some older d8 versions choke on.
