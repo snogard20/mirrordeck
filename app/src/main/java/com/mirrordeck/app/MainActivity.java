@@ -34,7 +34,7 @@ public class MainActivity extends Activity {
         root.addView(show);
 
         root.addView(Ui.body(this,
-                "Standalone MirrorDeck v1.3 — its own app, installs next to any " +
+                "Standalone MirrorDeck v1.3.1 — its own app, installs next to any " +
                 "other casting app without touching it. Screen video and supported " +
                 "playback audio, same Wi-Fi network, one sender to one receiver. " +
                 "Install this same app on both devices."));
